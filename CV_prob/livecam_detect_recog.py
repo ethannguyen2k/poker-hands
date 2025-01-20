@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import time
+import os
 
 def setup_camera():
     # Initialize camera (try different indices if 0 doesn't work)
@@ -71,30 +72,120 @@ def extract_card_corner(frame, contour):
     return corner
 
 def split_rank_suit(corner_img):
+    """Split corner into rank and suit regions."""
     # Convert to grayscale if not already
     if len(corner_img.shape) == 3:
         corner_gray = cv2.cvtColor(corner_img, cv2.COLOR_BGR2GRAY)
     else:
         corner_gray = corner_img
 
-    corner_gray = cv2.resize(corner_gray, (0, 0), fx=4, fy=4)
+    # Resize for better recognition but maintain aspect ratio
+    scale = 4
+    corner_gray = cv2.resize(corner_gray, (0, 0), fx=scale, fy=scale)
         
-    # Threshold to get clean black and white image
-    _, thresh = cv2.threshold(corner_gray, 160, 255, cv2.THRESH_BINARY)
-    
     # Get dimensions
-    height, width = thresh.shape
+    height, width = corner_gray.shape
     
     # Split into top (rank) and bottom (suit)
-    rank_region = thresh[0:int(height/2), :]
-    suit_region = thresh[int(height/2):, :]
+    rank_region = corner_gray[0:int(height*0.5), :]
+    suit_region = corner_gray[int(height*0.5):, :]
     
-    cv2.imshow('Rank', rank_region)
-    cv2.imshow('Suit', suit_region)
+    cv2.imshow('Split Rank', rank_region)
+    cv2.imshow('Split Suit', suit_region)
     
     return rank_region, suit_region
 
-def detect_card(frame):
+def load_templates():
+    """Load and store reference templates for ranks and suits."""
+    # Define the ranks and suits we want to recognize
+    ranks = ['ace', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'jack', 'queen', 'king']
+    suits = ['hearts', 'diamonds', 'clubs', 'spades']
+    
+    # Load templates from a templates directory
+    rank_templates = {}
+    suit_templates = {}
+    
+    for rank in ranks:
+        template_path = f'templates/output/rank_{rank}.jpg'
+        if os.path.exists(template_path):
+            template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+            rank_templates[rank] = template
+            
+    for suit in suits:
+        template_path = f'templates/output/suit_{suit}.jpg'
+        if os.path.exists(template_path):
+            template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+            suit_templates[suit] = template
+            
+    return rank_templates, suit_templates
+
+def recognize_rank(rank_img, templates):
+    """Recognize the rank from the rank region using template matching."""
+    best_score = float('-inf')
+    best_rank = None
+    
+    # Simple preprocessing - just binary threshold since our input is already pretty clean
+    _, rank_img = cv2.threshold(rank_img, 160, 255, cv2.THRESH_BINARY)
+    
+    # Ensure consistent size
+    rank_img = cv2.resize(rank_img, (50, 70))
+    
+    # Show preprocessed image for debugging
+    cv2.imshow('Preprocessed Rank', rank_img)
+    
+    # For better edge detection
+    rank_img = 255 - rank_img  # Invert to match template (black on white)
+    
+    for rank, template in templates.items():
+        # Preprocess template
+        template = cv2.resize(template, (50, 70))
+        
+        # Use TM_CCOEFF_NORMED as it's good for exact matches
+        result = cv2.matchTemplate(rank_img, template, cv2.TM_CCOEFF_NORMED)
+        score = result.max()
+        print(f"Rank {rank} score: {score:.4f}")
+        
+        if score > best_score:
+            best_score = score
+            best_rank = rank
+    
+    print(f"Best rank match: {best_rank} with score {best_score:.4f}")
+    return best_rank if best_score > 0.2 else None  # Lowered threshold for testing
+
+def recognize_suit(suit_img, templates):
+    """Recognize the suit from the suit region using template matching."""
+    best_score = float('-inf')
+    best_suit = None
+    
+    # Simple preprocessing - just binary threshold
+    _, suit_img = cv2.threshold(suit_img, 160, 255, cv2.THRESH_BINARY)
+    
+    # Ensure consistent size
+    suit_img = cv2.resize(suit_img, (40, 40))
+    
+    # Show preprocessed image for debugging
+    cv2.imshow('Preprocessed Suit', suit_img)
+    
+    # For better edge detection
+    suit_img = 255 - suit_img  # Invert to match template (black on white)
+    
+    for suit, template in templates.items():
+        # Preprocess template
+        template = cv2.resize(template, (40, 40))
+        
+        # Use TM_CCOEFF_NORMED
+        result = cv2.matchTemplate(suit_img, template, cv2.TM_CCOEFF_NORMED)
+        score = result.max()
+        print(f"Suit {suit} score: {score:.4f}")
+        
+        if score > best_score:
+            best_score = score
+            best_suit = suit
+    
+    print(f"Best suit match: {best_suit} with score {best_score:.4f}")
+    return best_suit if best_score > 0.2 else None  # Lowered threshold for testing
+
+def detect_card(frame, rank_templates, suit_templates):
     # Convert to grayscale
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
@@ -141,11 +232,24 @@ def detect_card(frame):
                     if corner is not None:
                         cv2.imshow('5. Card Corner', corner)
                         rank_region, suit_region = split_rank_suit(corner)
+                
+                        # Recognize rank and suit
+                        rank = recognize_rank(rank_region, rank_templates)
+                        suit = recognize_suit(suit_region, suit_templates)
 
-                        # Convert corner to grayscale for recognition
-                        corner_gray = cv2.cvtColor(corner, cv2.COLOR_BGR2GRAY)
-                        _, corner_thresh = cv2.threshold(corner_gray, 160, 255, cv2.THRESH_BINARY)
-                        cv2.imshow('6. Corner Threshold', corner_thresh)
+                        # Calculate center of the card
+                        M = cv2.moments(contour)
+                        if M["m00"] != 0:
+                            cx = int(M["m10"] / M["m00"])
+                            cy = int(M["m01"] / M["m00"])
+                            
+                            # Display recognized values
+                            if rank or suit:  # Changed from 'and' to 'or' for testing
+                                text = f"{rank if rank else '?'}{suit if suit else '?'}"
+                                print(f"Displaying text: {text} at ({cx}, {cy})")  # Debug print
+                                cv2.putText(frame, text, (cx-20, cy), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, 
+                                        (0, 0, 255), 3)
     return frame
 
 def main():
@@ -153,6 +257,11 @@ def main():
     cap = setup_camera()
     if cap is None:
         return
+
+    # Load templates
+    rank_templates, suit_templates = load_templates()
+    print(f"Loaded {len(rank_templates)} rank templates: {list(rank_templates.keys())}")
+    print(f"Loaded {len(suit_templates)} suit templates: {list(suit_templates.keys())}")
 
     # FPS calculation variables
     fps_start_time = time.time()
@@ -181,7 +290,7 @@ def main():
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         # Process frame to detect cards
-        processed_frame = detect_card(frame)
+        processed_frame = detect_card(frame, rank_templates, suit_templates)
 
         # Display the frame
         cv2.imshow('Card Detection Feed', processed_frame)
