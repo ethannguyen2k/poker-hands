@@ -9,7 +9,7 @@ The project involved three pre-built models and one custom-built model:
 - Vanilla Decision Tree
 - Vanilla Random Forest
 - Stacked Ensemble Models (2 Random Forest Classifiers with different parameters, 1 Decision Tree Classifier, and LogisticRegression as the final estimator)
-- Custom Decision Tree Model, built from scratch (you can find this at from_scratch notebook)
+- Custom Decision Tree Model, built from scratch (you can find this at from_scratch notebook) or you can go to [this file](from_scratch_how_to.md) to see how I build it.
 
 When I first approached this project, I had a simple goal: understand how decision trees work by building one from scratch. The theory seemed straightforward - split the data based on the most informative feature, repeat until you reach pure leaves. However, the implementation revealed much more complicated the more you have to code for an actual tree-based models.
 
